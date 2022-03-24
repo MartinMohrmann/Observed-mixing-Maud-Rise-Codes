@@ -17,8 +17,9 @@ import xarray
 import warnings
 import locale
 import scipy
+import copy
 
-mld_density_diff=0.03
+mld_density_diff=0.02
 monthDict={1:'Jan', 2:'Feb', 3:'Mar', 4:'Apr', 5:'May', 6:'Jun', 7:'Jul', 8:'Aug', 9:'Sep', 10:'Oct', 11:'Nov', 12:'Dec'}
 
 
@@ -31,10 +32,7 @@ monthDict={1:'Jan', 2:'Feb', 3:'Mar', 4:'Apr', 5:'May', 6:'Jun', 7:'Jul', 8:'Aug
 # 4 pressure (db)
 # 5 temperature (°C)
 # 6 salinity (PSU)
-
-# This is what we call "Maud Rise Float" in publications
 NKE_MaudRise = numpy.genfromtxt("../data/converted/old/Ascent profile CTD Message.csv", encoding="cp1252", delimiter=";", usecols=[1,2,5,6,7],skip_header=1)
-# This is what we call "Reference Float"
 NKE_Compare  = numpy.genfromtxt("../data/converted/new/Ascent profile CTD Message.csv", encoding="cp1252", delimiter=";", usecols=[1,2,5,6,7],skip_header=1)
 
 
@@ -47,8 +45,8 @@ def download_floatdata(floatid):
     Returns:
         None (but saves the files)"""
 
-    email_user = secret.email_user
-    email_pass = secret.email_pass
+    email_user = '***REMOVED***'
+    email_pass = '***REMOVED***'
 
     mail = imaplib.IMAP4_SSL("outlook.office365.com",993)
     mail.login(email_user, email_pass)
@@ -59,7 +57,7 @@ def download_floatdata(floatid):
         print('searching in %s only'%searchbox)
         mail.select(floatid) # change 'Inbox' to floatid to search explicitly in my postboxes, but only Feb 2020 onwards :(
 
-        #type, data = mail.search(None, '(HEADER Subject "SBD Msg From Unit: %s")'%floatid)
+        #type, data = mail.search(None, '(HEADER Subject "SBD Msg From Unit: %s")'%floatid)      #FROM "tech163@fusionswift.com"  '(HEADER Subject "Subject Here")'
         type, data = mail.search(None, 'ALL')
         mail_ids = data[0]
         id_list = mail_ids.split()
@@ -72,7 +70,7 @@ def download_floatdata(floatid):
             raw_email_string = raw_email.decode('utf-8')
             email_message = email.message_from_string(raw_email_string)  # downloading attachments
             for part in email_message.walk():
-                # this part comes from the snipped I don't fully understand yet, email reading...
+                # this part comes from the snipped I don't understand yet...
                 if part.get_content_maintype() == 'multipart':
                     continue
                 if part.get('Content-Disposition') is None:
@@ -99,8 +97,8 @@ def create_coordinates_dates_list(floatid):
     
     Returns:
         None (but saves a pandas dataframe)"""
-    email_user = secret.emailuser
-    email_pass = secret.emailpass
+    email_user = '***REMOVED***'
+    email_pass = '***REMOVED***'
 
     mail = imaplib.IMAP4_SSL("outlook.office365.com",993)
     mail.login(email_user, email_pass)
@@ -113,7 +111,7 @@ def create_coordinates_dates_list(floatid):
     mdat = []
 
     for folder in ['Inbox', floatid]:
-        mail.select(folder) # 300234067208900 # 300234068638900
+        mail.select(300234067208900) # 300234067208900 # 300234068638900
 
         type, data = mail.search(None, '(HEADER Subject "SBD Msg From Unit: %s")'%floatid)
         mail_ids = data[0]
@@ -136,10 +134,14 @@ def create_coordinates_dates_list(floatid):
                 if 'CEPradius' in line:
                     mCEP = int(re.findall('[-+]?[.]?[\d]+(?:,\d\d\d)*[\.]?\d*(?:[eE][-+]?\d+)?', line)[0])
                 if 'Time of Session' in line:
+                    # breakpoint()
                     locale.setlocale(locale.LC_TIME,'en_GB.utf8') # This is important to read in the date
                     # in the right format with computers running on non-english locale
                     mydate = datetime.datetime.strptime(line[-25:-1], "%a %b %d %H:%M:%S %Y")
-
+                    #print('worked!', line[-21:-1])
+                    #except:
+                    #    print('failed!', line[-21:-1])
+                    #    import pdb; pdb.set_trace()
             if (latlon and mydate and mCEP):
                 lons.append(float(latlon[1]))
                 lats.append(float(latlon[0]))
@@ -231,6 +233,8 @@ def add_timeaxis(NKE_float, pfloat):
 
 
 def sort_missing(NKE_float):
+    import gamman as gn
+
     """filtering out data rows where one or more sensors did not return a values
     Note: it is a bit sad to filter out this additional readings, but with incomplete
     data sets computation of e.g. potential temperature is impossible, as well as most derived values"""
@@ -239,6 +243,14 @@ def sort_missing(NKE_float):
     # the sorting routine comes later
     counter = 0
     data = dict()#sal=[], tem=[], den=[], pre=[], tim=[], cyk=[], nsq=[], bvf=[])
+    #for i in range (0,len(NKE_float[:,1])-1):
+        # if numpy.isnan([NKE_float[i,1], NKE_float[i,2], NKE_float[i,3], NKE_float[i,4]]).any(): # alternative
+        #if any([elem=='' for elem in [NKE_float[i,1], NKE_float[i,2], NKE_float[i,3], NKE_float[i,4]]]):
+            # This would indicate some data is missing for the reading
+            #print('data missing')
+            #counter += 1
+            #continue
+            # I can consider checking if my pressure has any offset, e.g. surface pressure yes no?
     data['sal'] = gsw.SA_from_SP(NKE_float[:,4], NKE_float[:,2], 3, -65)
     # data['sal'] = NKE_float[:,4] #!!!!!!!!!!!!!!!!!!!!!!!!!!!!!should be changed to asolute salinity, also for SOCCOM floats
     tem = gsw.CT_from_t(data['sal'], NKE_float[:,3], NKE_float[:,2])
@@ -248,6 +260,16 @@ def sort_missing(NKE_float):
     data['tim'] = NKE_float[:,1]
     data['cyk'] = NKE_float[:,0].astype(int)
     data['rho'] = gsw.density.rho(data['sal'], data['tem'], NKE_float[:,2])# in situ density...
+    #data['gamman'], gmin, gmax = gamma_n, dgl, dgh = gn.gamma_n(
+    #    NKE_float[:,4], 
+    #    NKE_float[:,3], 
+    #    NKE_float[:,2],
+    #    len(NKE_float[:,4]),3,-64)
+    # breakpoint()
+    #data['nsq'] = numpy.gradient(data['den'])/numpy.gradient(data['pre'])
+    #data['bvf'] = (gsw.density.rho(NKE_float[i+1,4], NKE_float[i+1,3], NKE_float[i+1,2])-
+    #               gsw.density.rho(NKE_float[i,4], NKE_float[i,3], NKE_float[i,2]))/
+    #              (NKE_float[i+1,2]-NKE_float[i,2])
 
     print('... done sorting out incomplete entries, filtered out %s from %s entries...'%(counter, len(NKE_float[:,3])))
     return data
@@ -268,10 +290,12 @@ def create_dataframe(pfloat, force_reconstruction, customstartdate=None, custome
         mtime = os.stat(filepath).st_mtime
         #if datetime.date.fromtimestamp(mtime) == datetime.date.today():
         df = pandas.read_pickle(filepath)
+        #df = df.drop_duplicates(['pre', 'sal', 'tem']) 
         print('Returning previously computed DataFrame...')
 
         for i in range(0,max(df['cyk'])+1):
             df2 = df[df['cyk']==i]
+            df2 = df2.drop_duplicates(subset = ["sal","tem","pre"])
             if len(df2)<=1:
                 #print('filtered out empty profile i=%s'%i)
                 pass
@@ -280,9 +304,12 @@ def create_dataframe(pfloat, force_reconstruction, customstartdate=None, custome
                 nsquared = numpy.append(nsquared, nsquared[-1])
                 with pandas.option_context('mode.chained_assignment', None):
                     df2['nsq'] = nsquared
+                #df2['sal'] = gsw.SA_from_SP(df2['sal'].values,df2['tem'].values, 3,-65)
                 profiles.append(df2)
-        return df, profiles
 
+        return df, profiles
+        #else:
+        #    print('intermediate file outdated, reconstructing...')
         
     # order of functions is essential, don't reorder!
     if pfloat in ['new', '300234068638900.nc']:
@@ -294,6 +321,8 @@ def create_dataframe(pfloat, force_reconstruction, customstartdate=None, custome
     #elif pfloat == 'soc':
     else:
         df = create_soccom_dataframe(pfloat)
+        #df.to_pickle(filepath)
+        #return df
 
     if pfloat in ['new', '300234068638900.nc', 'old', '300234067208900.nc']:
         NKE_float = repair_hours(NKE_float)
@@ -318,19 +347,29 @@ def create_dataframe(pfloat, force_reconstruction, customstartdate=None, custome
         df = df.sort_values(by='pre', ascending=False)
         df = df.reset_index()
 
+    #nsquared, pmid = gsw.Nsquared(df['sal'], df['tem'], df['pre'])
+    #nsquared = numpy.append(nsquared, nsquared[-1])
+    #df['nsq'] = nsquared
+    #df['nsq'] = numpy.gradient(df['den'])/numpy.gradient(df['pre'])
+    #df = df.drop_duplicates(['pre', 'sal', 'tem'])
     df.to_pickle(filepath)
     for i in range(0,max(df['cyk'])+1):
         df2 = df[df['cyk']==i]
+        df2 = df2.drop_duplicates(subset = ["sal","tem","pre"])
         # df2 = df2.reset_index()
         # breakpoint()
         if len(df2)<=1:
             pass
             #print('filtered out empty profile i=%s'%i)
         else:
+            # This solution is very ugly, since I am effectively shifting the pressure grid by one grid point
+            # I should rather have the BVF in an extra array and treat it on pmid all the time!!!
+            # print(len(df2))
             nsquared, pmid = gsw.Nsquared(df2['sal'], df2['tem'], -df2['pre'])
             # turner, gsw.stability.Turner_Rsubrho(SA, CT, p, axis=0)
             nsquared = numpy.append(nsquared, nsquared[-1])
             df2['nsq'] = nsquared
+            #data['nsq'].append(nsquared[j])
             profiles.append(df2)
 
     return df, profiles
@@ -340,7 +379,7 @@ def create_soccom_dataframe(filename): # take WMOid as input instead
     """ This function takes the list of profiles as provided in the .nc files and reforms 
     it to a more 1d stream like format """
 
-    # The following outcommented section is an alternative simpler implmentation with the
+    # The following section is an alternative simpler implmentation with the
     # help of argopy, however I find it to not work as quick and precise as my own stuff
     """
     WMOid = 5904471
@@ -366,6 +405,8 @@ def create_soccom_dataframe(filename): # take WMOid as input instead
     """
 
     file = netCDF4.Dataset('../data/SOCCOM/%s'%filename)
+    #len(file.variables['JULD_LOCATION'][:])
+    # print('SOCCOM dataset end specified earlier manually %s'%end)
     normdates = []
     # Time key has different names for different floats and downloads
     if 'JULD' in file.variables.keys():
@@ -375,6 +416,7 @@ def create_soccom_dataframe(filename): # take WMOid as input instead
     juldates = file.variables[key][:]
     end = len(file.variables[key][:]) #5
     for mydate in juldates:
+        # DATES (CAN BE) ALTERED TO OVERLAY WITH MY FLOAT DATA; ORIGINAL IS 1950, spatial overlay would be 1954
         normdates.append(datetime.datetime(1950, 1, 1) + datetime.timedelta(int(mydate) - 1))
     labels = [normdate.date() for normdate in normdates]
     data = dict(sal=[], tem=[], pre=[], tim=[], timestamps=[], den=[], lat=[], lon=[], nsq=[], cyk=[], dates=[], oxy=[]) 
@@ -382,6 +424,7 @@ def create_soccom_dataframe(filename): # take WMOid as input instead
     for i in range (0,end):
     	# end must be the number of profiles here
         godkeys = [b'A', b'B']
+        # for some floats, PROFILE_QCs do not exist :(
         if 'PROFILE_TEMP_QC' in file.variables.keys():
             if not (numpy.isin(file['PROFILE_TEMP_QC'][i], [b'A', b'B']) & 
                     numpy.isin(file['PROFILE_PSAL_QC'][i], [b'A', b'B']) & 
@@ -389,10 +432,15 @@ def create_soccom_dataframe(filename): # take WMOid as input instead
                 # print('bad quality flag for profile found, continue with next profile...')
                 continue
 
+        # df['PRES_ADJUSTED'][i] = numpy.nan = df['PRES_ADJUSTED_QC'][i], df['TEMP_ADJUSTED_QC'][i], df['PSAL_ADJUSTED_QC'][i]
+        # df['DOXY_ADJUSTED_QC'][i]
+        # abssal = file.variables['PSAL_ADJUSTED'][i]#!!!!!!!!!!!!!!!!!!!!!!!!!!!!!should be changed to asolute salinity, also for SOCCOM floats
         abssal = gsw.SA_from_SP(file.variables['PSAL_ADJUSTED'][i], file.variables['PRES_ADJUSTED'][i], 3, -65)
         tcons = gsw.CT_from_t(abssal, file.variables['TEMP_ADJUSTED'][i], file.variables['PRES_ADJUSTED'][i])
         sigma0 = gsw.density.sigma0(abssal, tcons)
         nsquared, pmid = gsw.Nsquared(abssal, tcons, file.variables['PRES_ADJUSTED'][i])
+        # This solution is very ugly, since I am effectively shifting the pressure grid by one grid point
+        # I should rather have the BVF in an extra array and treat it on pmid all the time!!!
         nsquared = numpy.append(nsquared, nsquared[-1])
 
         for j in range (0, len(file.variables['PRES_ADJUSTED'][i])):
@@ -422,8 +470,9 @@ def create_soccom_dataframe(filename): # take WMOid as input instead
             data['lat'].append(file.variables['LATITUDE'][i])
             data['dates'].append(normdates[i])
             data['cyk'].append(i)
-            data['tim'].append(normdates[i]) # this is just here for legacy compatibility reasons for older scripts
+            data['tim'].append(normdates[i]) # this is just here for legacy compatibility reasons for my older scripts
             data['timestamps'].append(normdates[i].timestamp())
+            #data['bvf'] = -9.81/data['den']*numpy.gradient(data['den'])/numpy.gradient(data['pre'])
 
     print(len(data['tem']), len(data['den']), len(data['lon']))
     dfsoc = pandas.DataFrame.from_dict(data)
@@ -431,7 +480,7 @@ def create_soccom_dataframe(filename): # take WMOid as input instead
     return dfsoc
 
 
-def create_datagrid(df, variable, xioverwrite=None):
+def create_datagrid(df, variable, xioverwrite=None, xres=500):
     """ This function is usefull to grid/regrid two datasets
     (e.g. CTD trajectories ) over a common time period (difference plots)
 
@@ -451,7 +500,7 @@ def create_datagrid(df, variable, xioverwrite=None):
     else:
         # breakpoint()
         xi = numpy.linspace(min(df['timestamps'].astype('int')),
-            max(df['timestamps'].astype('int')), 500)
+            max(df['timestamps'].astype('int')), xres)
     if variable == 'nsq':
         xi, yi, grid_z0den = create_datagrid(df=df, variable='den', xioverwrite=xioverwrite)
         xi, yi, grid_z0pre = create_datagrid(df=df, variable='pre', xioverwrite=xioverwrite)
@@ -524,6 +573,19 @@ def create_contourplot(xi, yi, grid_z0, ax, maxdepth, cmap,
 
     ax.set_ylim(-maxdepth,-mindepth)
 
+    #years = mdates.YearLocator()   # every year
+    #months = mdates.MonthLocator()  # every month
+    #years_fmt = mdates.DateFormatter('%Y')
+    #months_fmt = mdates.DateFormatter('%m')
+
+    #ax.set_ylim(-maxdepth,0)
+    #ax.xaxis.set_minor_locator(months)
+    #ax.xaxis.set_minor_formatter(months_fmt) 
+    #ax.xaxis.set_major_locator(years)
+    #ax.xaxis.set_major_formatter(years_fmt)
+
+    #ax.xaxis.grid(which='both', color='lightgrey')
+    #ax.tick_params(axis='x', which='minor', colors='grey')
     if contour and contourf:
         return colors, lines
     elif contour and not contourf:
@@ -532,12 +594,15 @@ def create_contourplot(xi, yi, grid_z0, ax, maxdepth, cmap,
         return colors
 
 
-def style_timeaxis(ax, grid=True, color='grey'):
+def style_timeaxis(ax, grid=True, color='grey', minor=True, monthnames=False):
     years = mdates.YearLocator()   # every year
     months = mdates.MonthLocator()  # every month
     years_fmt = mdates.DateFormatter('%Y')
-    months_fmt = mdates.DateFormatter('%m')
-
+    if minor:
+        formatter = '%B' if monthnames else '%m'
+        months_fmt = mdates.DateFormatter(formatter)
+    else:
+        months_fmt = mdates.DateFormatter('')
     ax.xaxis.set_minor_locator(months)
     ax.xaxis.set_minor_formatter(months_fmt) 
     ax.xaxis.set_major_locator(years)
@@ -550,26 +615,40 @@ def style_timeaxis(ax, grid=True, color='grey'):
     ax.tick_params(axis='x', which='major', colors='k')
 
 
-def create_mld(df, oneprofile=False):
+def create_mld(df, oneprofile=False, maxbvf=False, xres=500):
     """ calculate the mld-depth, based on a density difference criteria """
     # Under the sea ice, float samples does all the way to the surface,
     # to keep criteria consistent we form difference from water properties at 20m depth at all times,
     mld = numpy.array([])
 
     if oneprofile:
+        df = df.drop_duplicates(subset = ["sal"])
+        df = df.drop_duplicates(subset = ["den"])
+        df = df.drop_duplicates(subset = ["pre"])
+        newx = numpy.arange(20,200,1)
+        newy = numpy.interp(newx, -df['pre'].values, df['den'].values)
+        depth20 = numpy.argmin(abs(newx-20)) # index on depth axis (yi) which is closest to 20 m
+        diff = newy-(newy[depth20]+mld_density_diff)
+        diff[diff<=0] = numpy.nan
+        if numpy.isnan(diff).all():
+            mld_onetime=numpy.nan
+        else:
+            mld_onetime = newx[numpy.nanargmin(diff)]
+        
+        # old solution
+        """
         depth20 = numpy.argmin(abs(df['pre']+20)) # index on depth axis (yi) which is closest to 20 m
-        mld_onetime = df['pre'][
-            numpy.argmin(
-                abs(
-                    df['den']-
-                        (df['den'][depth20]+mld_density_diff)))]
-
-        return mld_onetime
+        profile = profile[profile['pre']<=-20]
+        diff = df['den']-(df['den'].iloc[depth20]+mld_density_diff)
+        diff[diff<=0] = numpy.nan
+        mld_onetime = df['pre'].iloc[numpy.argmin(diff)]
+        """
+        return -mld_onetime
 
 
     if type(df) == pandas.core.frame.DataFrame:
         # long list of values instead of single profiles
-        xi, yi, grid_z0 = create_datagrid(df, 'den', xioverwrite=None)        
+        xi, yi, grid_z0 = create_datagrid(df, 'den', xioverwrite=None, xres=xres)        
         depth20 = numpy.argmin(abs(yi+20)) # index on depth axis (yi) which is closest to 20 m
         for i in range(0,len(grid_z0[0,])):
             try:
@@ -601,20 +680,59 @@ def create_mld(df, oneprofile=False):
 
     else:
         for profile in df:
+            profile = profile.drop_duplicates(subset = ["sal"])
+            profile = profile.drop_duplicates(subset = ["den"])
+            profile = profile.drop_duplicates(subset = ["pre"])
             profile = profile.reset_index()
-            if len(profile)==0:
-                mld_onetime=0
+            if len(profile)<=1:
+                mld_onetime=numpy.nan
             else:
-                depth20 = numpy.argmin(abs(profile['pre']+20)) # index on depth axis (yi) which is closest to 20 m
-                # print('depth20: index %s gives depth %s'%(depth20, profile['pre'][depth20]))
-                mld_onetime = profile['pre'][
-                    numpy.nanargmin(
-                        abs(
-                            profile['den']-
-                                (profile['den'][depth20]+mld_density_diff)))]
-            mld = numpy.append(mld, mld_onetime)
+                if maxbvf:
 
-    print('The length of the mld is %s'%len(mld))
+                    if numpy.isnan(profile['nsq']).all():
+                        mld_onetime=0
+                    else:
+                        #print('using maxbvf method')
+                        #breakpoint()
+                        #profile = profile[abs(profile['pre'])>20]
+                        #try:
+                        #    mld_onetime = -profile['pre'].iloc[numpy.nanargmax(profile['nsq'])]
+                        #except:
+                        #    breakpoint()
+                        newx = numpy.arange(20,200,1)
+                        newy = numpy.interp(newx, -profile['pre'].values, profile['nsq'].values)
+                        depth20 = numpy.argmin(abs(newx-20)) # index on depth axis (yi) which is closest to 20 m
+                        mld_onetime = newx[numpy.nanargmax(newy)]
+                        #print('pass', mld_onetime)
+                        #breakpoint()
+                        #mld_onetime = -profile['pre'].iloc[numpy.nanargmax(profile['nsq'])]
+                        #diff = newy-(newy[depth20]+mld_density_diff)
+                        #diff[diff<=0] = numpy.nan
+                        #try:
+                        #    mld_onetime = newx[numpy.nanargmin(diff)]
+                        #except:
+                        #    breakpoint()
+                else:
+                    # print('branch4b')
+                    newx = numpy.arange(20,200,1)
+                    newy = numpy.interp(newx, -profile['pre'].values, profile['den'].values)
+                    depth20 = numpy.argmin(abs(newx-20)) # index on depth axis (yi) which is closest to 20 m
+                    diff = newy-(newy[depth20]+mld_density_diff)
+                    diff[diff<=0] = numpy.nan
+                    try:
+                        mld_onetime = newx[numpy.nanargmin(diff)]
+                    except:
+                        breakpoint()
+                    # old solution
+                    """
+                    depth20 = numpy.argmin(abs(profile['pre']+20)) # index on depth axis (yi) which is closest to 20 m
+                    diff = profile['den']-(profile['den'].iloc[depth20]+mld_density_diff)
+                    diff[diff<=0] = numpy.nan
+                    mld_onetime = profile['pre'].iloc[numpy.argmin(diff)]
+                    """
+            mld = numpy.append(mld, -mld_onetime)
+
+    # print('The length of the mld is %s'%len(mld))
     return mld
 
 def create_ww_lower(df, oneprofile=False):
@@ -626,9 +744,15 @@ def create_ww_lower(df, oneprofile=False):
     if oneprofile:
         winterwater = numpy.where(df['tem']<ww_temp_max)
         if len(winterwater[0]):
+            #breakpoint()
+            #try:
             depth = df['pre'].iloc[[numpy.nanmax(numpy.where(df['tem']<ww_temp_max))]].values
+            depth = depth[0]
+            #except:
+            #    breakpoint()
         else:
             depth = numpy.nan
+        #print(type(depth))
         return depth
 
     if type(df) == pandas.core.frame.DataFrame:
@@ -641,6 +765,8 @@ def create_ww_lower(df, oneprofile=False):
                 depth = yi[numpy.nanmax(numpy.where(grid_z0[:,i]<ww_temp_max))]
             else:
                 depth = numpy.nan
+            #except:
+            #    breakpoint()
             ww_lower = numpy.append(ww_lower, depth)
     return ww_lower
 
@@ -675,19 +801,25 @@ def create_isopycnal(df, variable, density_value=None, depth_value=None, oneprof
         xi, yi, grid_z0_tem = create_datagrid(df, 'tem', xioverwrite=None)
         xi, yi, grid_z0_sal = create_datagrid(df, 'sal', xioverwrite=None)
         for i in range(0,len(grid_z0_den[0,])):
+            #with warnings.catch_warnings():
+            #    # this will suppress all warnings in this block
+            #    warnings.simplefilter("ignore")
             if density_value:
                 dense_water = numpy.where(grid_z0_den[:,i]>density_value)
+                # breakpoint()
                 if len(dense_water[0])>0:
                     try:
                         depth_index = numpy.nanmin(numpy.where(grid_z0_den[:,i]>density_value))
                     except:
                         breakpoint()
+                    #    print('skipped density value for index %s'%i)
                     spice = gsw.spiciness0(grid_z0_sal[:,i][depth_index], grid_z0_tem[:,i][depth_index])
                     depth = yi[depth_index]
                 else:
                     depth = numpy.nan
                     spice = numpy.nan
                     print('error or skip: no density value:', density_value)
+                    # breakpoint()
             elif depth_value:
                     # if computing the spice strictly along one depth index (not recommended and not used by me)
                     depth_index = numpy.nanargmin(abs(yi+depth_value))
@@ -696,6 +828,14 @@ def create_isopycnal(df, variable, density_value=None, depth_value=None, oneprof
             isopycnal = numpy.append(isopycnal, depth)
             spiciness = numpy.append(spiciness, spice)
     return isopycnal, spiciness
+
+#def create_isopycnals_at_depths(df, variable, deptharray):
+#    # 1. compute suitable density values that correlate with the chosen depths
+#    xi, yi, grid_z0 = create_datagrid(df, variable, xioverwrite=None)
+#    depth_indexarray= numpy.array([numpy.argmin(abs(yi+i)) for i in deptharray])
+#    densities = numpy.nanmean(grid_z0, axis=1) # densities for all yi
+#    densities = densities[depth_indexarray] # densities for the deptharray corr. yi
+
 
 def create_spice2d(df, variable, oneprofile=False):
     """ calculate the depth of an isopycnal of value density_value 
@@ -724,6 +864,7 @@ def create_spice2d(df, variable, oneprofile=False):
     else:
         # This is the case if using gamman
         dens_ax = numpy.linspace(27.4, 28.4)
+    #breakpoint()
     for density_value in dens_ax:
         spiciness = numpy.array([])
         depths = numpy.array([])
@@ -803,23 +944,77 @@ def create_density_along_ww_lower(df, variable, oneprofile=False):
             ww_lower_density = numpy.append(ww_lower_density, density)
     return ww_lower_density
 
-def integrate(df, variable, from_depth, to_depth, oneprofile=False):
+def integrate(df, variable, from_depth, to_depth, oneprofile=False, xres=500, returnmean=False):
     result = numpy.array([])
+    if oneprofile:
+        df = df.drop_duplicates(subset = ["sal"])
+        df = df.drop_duplicates(subset = ["den"])
+        df = df.drop_duplicates(subset = ["pre"])
+        newpre = numpy.linspace(-to_depth,-from_depth, 100)
+        newsal = numpy.interp(newpre, -df['pre'].values, df['sal'].values)
+        newden = numpy.interp(newpre, -df['pre'].values, df['den'].values)
+        newtem = numpy.interp(newpre, -df['pre'].values, df['tem'].values)
+        newnsq = numpy.interp(newpre, -df['pre'].values, df['nsq'].values)
+
+        df2 = pandas.DataFrame(dict(pre=newpre, sal=newsal, den=newden, tem=newtem, nsq=newnsq))
+        #breakpoint()
+        if variable=='tem':
+            cp   = gsw.cp_t_exact(df2['sal'],df2['tem'],df2['pre'])
+            # This is not quite the absolute heat amount, because I use sigma0 as density
+            # to change to absolute, it might be enough to add 1000kg/m³?
+            m_g  = numpy.gradient(-df2['pre'])*(df2['den']+1000) # mass per vertical grid cell * dens = weight
+            heat = cp*m_g*(df2['tem']+273.15) # [J/kg/K]*[kg]*[K] # per gird cell
+            columncontent = numpy.nansum(heat)
+            tempmean = numpy.nanmean(df2['tem'])
+            if returnmean:
+                return columncontent, tempmean
+            else:
+                return columncontent
+        if variable=='sal':
+            m_g  = numpy.gradient(df2['pre']
+                                 )*(df2['den']+1000) # mass per vertical grid cell * dens = weight
+            salt = m_g*(df2['sal']/1000) # kg*[g/kg]
+            columncontent = numpy.nansum(salt)
+            saltmean = numpy.nanmean(df2['sal'])
+            if returnmean:
+                return columncontent, saltmean
+            else:
+                return columncontent
+        if variable=='nsq':
+            columncontent = numpy.nansum(df2['nsq'])
+            return columncontent
+
+        """ old solution
+        from_depth_index = numpy.argmin(abs(df['pre']-from_depth))
+        to_depth_index = numpy.argmin(abs(df['pre']-to_depth))
+        print('I should implement interpolation')
+        if variable=='sal':
+            m_g  = numpy.gradient(-df['pre'][to_depth_index:from_depth_index]
+                                 )*(df['den'][to_depth_index:from_depth_index]+1000) # mass per vertical grid cell * dens = weight
+            salt = m_g*(df['sal'][to_depth_index:from_depth_index]/1000) # kg*[g/kg]
+            columncontent = numpy.nansum(salt) 
+            return columncontent
+        end old solution """
+
     if type(df) == pandas.core.frame.DataFrame:
-        xi, yi, grid_z0_tem = create_datagrid(df, 'tem', xioverwrite=None)
-        xi, yi, grid_z0_sal = create_datagrid(df, 'sal', xioverwrite=None)
-        xi, yi, grid_z0_pre = create_datagrid(df, 'pre', xioverwrite=None)
-        xi, yi, grid_z0_den = create_datagrid(df, 'den', xioverwrite=None)
-        xi, yi, grid_z0_nsq = create_datagrid(df, 'nsq', xioverwrite=None)
+        xi, yi, grid_z0_tem = create_datagrid(df, 'tem', xioverwrite=None, xres=xres)
+        xi, yi, grid_z0_sal = create_datagrid(df, 'sal', xioverwrite=None, xres=xres)
+        xi, yi, grid_z0_pre = create_datagrid(df, 'pre', xioverwrite=None, xres=xres)
+        xi, yi, grid_z0_den = create_datagrid(df, 'den', xioverwrite=None, xres=xres)
+        xi, yi, grid_z0_nsq = create_datagrid(df, 'nsq', xioverwrite=None, xres=xres)
 
         from_depth_index = numpy.argmin(abs(yi-from_depth))
         to_depth_index = numpy.argmin(abs(yi-to_depth))
 
         for i in range(0,len(grid_z0_den[0,])):
             if variable=='tem':
+                # I turn sigma0 into potential density by adding 1000m that should be legit
+                # with t the in situ temperature! Need to change this if publishing results!
                 cp   = gsw.cp_t_exact(grid_z0_sal[to_depth_index:from_depth_index, i],
                                       grid_z0_tem[to_depth_index:from_depth_index, i],
                                       -grid_z0_pre[to_depth_index:from_depth_index, i]) #[J/kg/K]
+                # This is not quite the absolute heat amount, because I use sigma0 as density
+                # to change to absolute, it might be enough to add 1000kg/m³?
                 m_g  = numpy.gradient(-grid_z0_pre[to_depth_index:from_depth_index, i]
                                     )*(grid_z0_den[to_depth_index:from_depth_index, i]+1000) # mass per vertical grid cell * dens = weight
                 heat = cp*m_g*(grid_z0_tem[to_depth_index:from_depth_index,i]+273.15) # [J/kg/K]*[kg]*[K] # per gird cell
@@ -855,14 +1050,14 @@ def smooth_profile(profile, smooth_params=dict(sal=0.00005, tem=0.0025, den=0.00
             rms.append(numpy.nan)
 
     else:
-        # good value are
+        # really good value for all (except maybe direct visualisation of splines) are
         # sal -> s=0.00005; tem -> s=0.00015; den -> s=0.00004
         profile_int['sal'] = scipy.interpolate.UnivariateSpline(
-            -profile['pre'], profile['sal'],s=smooth_params['sal'])
+            -profile['pre'], profile['sal'],s=smooth_params['sal'])#s=0.00001)
         profile_int['tem'] = scipy.interpolate.UnivariateSpline(
-            -profile['pre'], profile['tem'],s=smooth_params['tem'])
+            -profile['pre'], profile['tem'],s=smooth_params['tem'])#s=0.00005)
         profile_int['den'] = scipy.interpolate.UnivariateSpline(
-            -profile['pre'], profile['den'],s=smooth_params['den'])
+            -profile['pre'], profile['den'],s=smooth_params['den'])#s=0.00005) # original 0.00004
 
         profile_int['sal'] = profile_int['sal'](
             numpy.arange(upperdepthlimit,lowerdepthlimit,1))
@@ -880,8 +1075,8 @@ def smooth_profile(profile, smooth_params=dict(sal=0.00005, tem=0.0025, den=0.00
 
 
 def compute_diapycnal_spice_variations(profiles, upperdepthlimit=200, 
-                                       lowerdepthlimit=1600, 
-                                       skipnan=False, SOCCOM=False):
+                                       lowerdepthlimit=1000, 
+                                       skipnan=False, SOCCOM=False, original_method=False):
     rms = []
     indices = []
     dates = []
@@ -907,30 +1102,61 @@ def compute_diapycnal_spice_variations(profiles, upperdepthlimit=200,
         if not len(profile_int):
             continue
 
-        #profile_int = smooth_profile(profile)
-        profile_int = pandas.DataFrame(profile_int)
-        upperdensityindex = numpy.nanargmin(abs(profile_int['pre']-upperdepthlimit))
-        lowerdensityindex = numpy.nanargmin(abs(profile_int['pre']-lowerdepthlimit))
-
-        profileshort = profile_int[upperdensityindex:lowerdensityindex]
-        # profileshort['spice'] = gsw.spiciness0(profileshort['sal'], profileshort['tem'])
-
-        x = profileshort['den'].values
-        dy=profileshort['spice'].diff()[1:]
-        dx=profileshort['den'].diff()[1:]
-
-        yfirst=dy/dx
-        xfirst=0.5*(x[:-1]+x[1:])
-
-        dyfirst=numpy.diff(yfirst,1)
-        dxfirst=numpy.diff(xfirst,1)
-
-        ysecond=dyfirst/dxfirst
-        xsecond=0.5*(xfirst[:-1]+xfirst[1:])
-        rms.append(numpy.sqrt(numpy.mean(ysecond**2)))
-            
-        indices.append(i)
+        #if original_method:
+        if i in [0,1 ,258,259]:
+            # first profiles where noisy (airbubbles?)
+            # 258,259 have artifacts
+            continue
         dates.append(profile.dates.iloc[0])
+
+        profile2 = copy.deepcopy(profile)
+        profile2 = profile2[profile2.pre>-lowerdepthlimit]
+        
+        profile2['dep'] = 500
+        profile2['den_dep'] = gsw.rho(profile2['sal'], profile2['tem'], profile2['dep'])
+
+        variables = ['sal', 'den', 'pre']
+        for variable in variables:
+            profile2 = profile2.drop_duplicates(subset = [variable])
+
+        
+        ip = {} #dictionary to take up interpolated profiles
+        dz = 25
+        ip['pres'] = numpy.arange(upperdepthlimit,lowerdepthlimit+dz,dz)
+        for variable in ['sal', 'tem', 'den_dep', 'pre', 'nsq']:
+            ip[variable] = numpy.interp(ip['pres'],#newx, 
+                           -profile2['pre'].values, 
+                            profile2[variable].values)
+
+        ip = pandas.DataFrame.from_dict(ip)
+        ip = ip.rolling(3, center=True).mean()
+
+        rho = gsw.rho(ip['sal'],
+                      ip['tem'],
+                      ip['pre'])
+        alpha = gsw.alpha(ip['sal'],
+                          ip['tem'],
+                          ip['pre'])
+        beta = gsw.beta(ip['sal'],
+                        ip['tem'],
+                        ip['pre'])
+
+        def diff1(ips):
+            diff1 = numpy.zeros(len(ips))
+            for i in range(2,len(ips)-2):
+                diff1[i] = (-ips[i+2]+8*ips[i+1]-8*ips[i-1]+ips[i-2])/(12*dz)
+            return diff1
+
+        def diff2(ips):
+            diff2 = numpy.zeros(len(ips))
+            for i in range(2,len(ips)-2):
+                diff2[i] = (-ips[i+2]+16*ips[i+1]-30*ips[i]+16*ips[i-1]-ips[i-2])/(12*dz**2)
+            return diff2
+
+        t_ss = 2*rho**2*alpha*beta*(diff1(ip['sal'])*diff2(ip['tem'])-diff1(ip['tem'])*diff2(ip['sal']))/diff1(ip['den_dep'])**3
+        rms = numpy.append(rms, numpy.sqrt(numpy.nanmean(t_ss**2)))          
+        indices.append(i)
+
     return rms, indices, dates
 
 
@@ -969,6 +1195,8 @@ def profile_colors(profiles, df_col, condition):
     norm = normdict[condition]
     for pindex,profile in enumerate(profiles):
         resultsdict = dict(index=pindex, color=None, zorder=None)
+        #resultsdict['index']=pindex
+        #value = df_col.sel(expver=5).isel(time=10)[condition]
         try:
             value = df_col.sel(time=profile.iloc[0].dates.to_pydatetime())[condition]
         except:
@@ -978,12 +1206,14 @@ def profile_colors(profiles, df_col, condition):
             continue
         rgba = cmapdict[condition](normdict[condition](value))
         resultsdict['color']=rgba#colors.append(rgba)
+        #indices.append(index)
         resultsdict['zorder']=1#zorders.append(1)
+        #print(resultsdict)
         results.append(resultsdict)
     return pandas.DataFrame(results).set_index('index')#results#colors, zorders, indices
 
 
-def profile_threshold_colors(profiles, df_col, condition, key):
+def profile_threshold_colors(profiles, df_col, condition, key, original_method=False):
     # define edgecolors, e.g. for rms mixing profiles
     
     # differentiate between SOCCOM and our floats, to equalize vertical resolution later on in 
@@ -992,19 +1222,25 @@ def profile_threshold_colors(profiles, df_col, condition, key):
         SOCCOM=False #rmslimit=5000
     else:
         SOCCOM=True#rmslimit=100
-    rmslimit=5000
+    #if orginal_method:
+    rmslimit=2500
+    #else:
+    #    rmslimit=5000
     results = []
     df_col['slope'] = numpy.sqrt(df_col['depth_topo_gradx']**2+df_col['depth_topo_grady']**2)
     rmsdeep, indices, dates = compute_diapycnal_spice_variations(
                                    profiles, 
                                    upperdepthlimit=500, 
                                    lowerdepthlimit=1550, 
-                                   SOCCOM=SOCCOM)
+                                   SOCCOM=SOCCOM,
+                                   original_method=False)
     rms, indices, dates = compute_diapycnal_spice_variations(
                                    profiles, 
-                                   upperdepthlimit=250, 
-                                   lowerdepthlimit=1550, 
-                                   SOCCOM=SOCCOM)
+                                   upperdepthlimit=200, 
+                                   lowerdepthlimit=1000, 
+                                   SOCCOM=SOCCOM,
+                                   original_method=False)
+    # breakpoint()
     dictionary = {'rms': rms, 'indices': indices, 'dates': dates}
     df = pandas.DataFrame(data=dictionary)
     df = df.set_index('indices')
@@ -1025,6 +1261,7 @@ def profile_threshold_colors(profiles, df_col, condition, key):
             results.append(resultsdict)
             continue
             
+        #breakpoint()
         # shallow (0-500m profile - continue)
         if max(abs(profile['pre'])) < 700:
             results.append(resultsdict)
@@ -1044,9 +1281,10 @@ def profile_threshold_colors(profiles, df_col, condition, key):
             resultsdict['zorder']=1#zorders.append(1)
             #print(resultsdict)
             #results.append(resultsdict)
+        # breakpoint()
         if condition == 'rms':
             if pindex == 0:
-                # first profile after deployment is often noisy/wrong
+                # first profile is often noisy/wrong
                 results.append(resultsdict)
                 continue
             try:
@@ -1068,7 +1306,10 @@ def profile_threshold_colors(profiles, df_col, condition, key):
             boxes = [dict(x=2.05, y=-64.7, w=5, h=2, color='black', zorder=2),
                      dict(x=-2.5, y=-67, w=4.5, h=4, color='tab:green', zorder=3),
                      dict(x=2.05, y=-67, w=5, h=2.25, color='orange', zorder=2)]
-
+            #for element in df_col:
+            #    breakpoint()
+            #    latitude = element.latitude
+            #    longitude = element.longitude
             resultsdict['color'] = 'lightgrey' # this is the scatter outside of all boxes
             for box in boxes:
                 if ((longitude>box['x']) and (longitude<box['x']+box['w']) and
@@ -1079,10 +1320,14 @@ def profile_threshold_colors(profiles, df_col, condition, key):
                     resultsdict['color']='lightgrey'
         results.append(resultsdict)
     results = pandas.DataFrame(results).set_index('index')
-    return results
+    # breakpoint()
+    return results#results#sdict#colors, zorders
 
 
-def plot_colored_figure(years, months, filenames, variables, mode, colorby, edgecolorby, comparedepth, axs):
+def plot_colored_figure(years, months, filenames, variables, mode, colorby, edgecolorby, comparedepth, axs, original_method=False):
+    # mode should by either scatter or profile 
+    # years = year#numpy.arange(2018,2020,1)#[2015,2016,2017,2018,2019,2020,2021]#,2017,2018,2019]#2018,2019,2020]
+    # months = [1,2,3,4,5,6,7,8,9,10,11,12]
 
     variables_dictionary = dict(tem='Conservative \ntemperature [°C]',
                            sal='Absolute \nsalinity [g/kg]',
@@ -1101,10 +1346,13 @@ def plot_colored_figure(years, months, filenames, variables, mode, colorby, edge
         df, profiles = create_dataframe(pfloat=key, force_reconstruction=False)
         df_col = xarray.open_dataset('../data/collocation_%s'%key)
         title=key
-        results = profile_threshold_colors(profiles, df_col, colorby, key)#'latitude')
-        threshold_results = profile_threshold_colors(profiles, df_col, edgecolorby, key)
+        results = profile_threshold_colors(profiles, df_col, colorby, key, original_method=original_method)#'latitude')
+        threshold_results = profile_threshold_colors(profiles, df_col, edgecolorby, key, original_method=original_method)
         for index, variable in enumerate(variables):#['tem', 'sal', 'den', 'spice']):
             counter = 0
+            #breakpoint()
+            #for pindex, profile in enumerate(profiles):
+            #breakpoint()
             for pindex in results.index:
                 profile = profiles[pindex]
                 
@@ -1134,22 +1382,56 @@ def plot_colored_figure(years, months, filenames, variables, mode, colorby, edge
                             print('sorted out profile in %s'%key)
                             continue
                         depthindex = numpy.nanargmin(abs(profile['pre']+comparedepth)) # depth index closest to the summand
+                        #try:
                         edgecolor=threshold_results.loc[pindex]['color']
+                        #except:
+                        #    breakpoint()
                         if results.loc[pindex]['color'] == 'lightgrey':
                             continue
+                        #if results.loc[pindex]['color'] == None:
+                        #    print('skipped')
+                        #    continue
                         if edgecolor=='red':
                             marker='*'
                             s=100 # markersize
+                            zorder=100
                         else:
                             marker='o'
                             s=50 #markersize
+                            zorder=50
+                        # print(results)
                         if variable == 'nsq':
+                            # Fill in NaN's...
                             mask = numpy.isnan(profile[variable].values)
                             profile[variable].values[mask] = numpy.interp(numpy.flatnonzero(mask), numpy.flatnonzero(~mask), profile[variable].values[~mask])
                         axs[index].scatter(profile[variable].values[depthindex], depth, s=s,
-                                           color=results.loc[pindex]['color'], zorder=results.loc[pindex]['zorder'],
+                                           color=results.loc[pindex]['color'], zorder=zorder,#results.loc[pindex]['zorder'],
                                            edgecolor=threshold_results.loc[pindex]['color'], marker=marker)
                         counter += 1
 
+                            # breakpoint()
+                        # print(profile[variable].values[depthindex], depth)
             print('for the variable %s, %s values were plotted'%(variable, counter))
+        """
+        if mode == 'scatter':
+            axs[index].set_xlabel(units_dictionary[variable])
+            axs[index].set_title(variables_dictionary[variable]+'\n'+where)
+        """
+
+        #axs[index].grid(zorder=100)
         axs[0].set_ylabel('bathymetry depth at float location')
+            #else:
+                # This is in case the profile is not in the date range specified first
+            #    axs[index].plot(profile[variable], profile['pre'], color='lightgrey', alpha=0.5, zorder=-2)
+
+def colormap_alpha(cmap):
+    from matplotlib.colors import ListedColormap
+    my_cmap = cmap(numpy.arange(cmap.N))
+    my_cmap[:,-1] = numpy.linspace(0, 1, cmap.N) # inactive
+    
+    #my_cmap[:,-1] = 1
+    my_cmap[0,-1] = 0
+    #my_cmap[,-1] = 1
+
+    my_cmap = ListedColormap(my_cmap)
+    return my_cmap
