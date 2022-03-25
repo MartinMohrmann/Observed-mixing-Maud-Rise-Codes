@@ -45,8 +45,8 @@ def download_floatdata(floatid):
     Returns:
         None (but saves the files)"""
 
-    email_user = '***REMOVED***'
-    email_pass = '***REMOVED***'
+    email_user = secrets.user
+    email_pass = secrets.pass
 
     mail = imaplib.IMAP4_SSL("outlook.office365.com",993)
     mail.login(email_user, email_pass)
@@ -97,8 +97,8 @@ def create_coordinates_dates_list(floatid):
     
     Returns:
         None (but saves a pandas dataframe)"""
-    email_user = '***REMOVED***'
-    email_pass = '***REMOVED***'
+    email_user = secrets.user
+    email_pass = secrets.pass
 
     mail = imaplib.IMAP4_SSL("outlook.office365.com",993)
     mail.login(email_user, email_pass)
